@@ -24,7 +24,7 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests pymongo
+        pip install requests pymongo bs4 requests
 
     # Run the Python script
     - name: Execute get_data.py
