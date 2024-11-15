@@ -1,117 +1,101 @@
-import requests
+import json
 import time
-import sys
-import pymongo
+import requests
+from bs4 import BeautifulSoup
+from pymongo import MongoClient
 import os
 
-# Environment variables for sensitive data (from GitHub Secrets)
-API_KEY = os.getenv("TMDB_API_KEY")
-MONGO_URL = os.getenv("MONGO_URL")
-BASE_URL = "https://api.themoviedb.org/3"
-
-# Headers
-HEADERS = {
-    "Authorization": f"Bearer {API_KEY}",
-    "Content-Type": "application/json;charset=utf-8"
-}
-
-# MongoDB Client
-client = pymongo.MongoClient(MONGO_URL)
+# MongoDB connection URL
+MONGO_URL = os.getenv("MONGO_URL")  # Ensure you have set this environment variable
+client = MongoClient(MONGO_URL)
 db = client["tmdb_data"]  # Database name
-movies_collection = db["movies_data"]  # Collection for movies
-tvshows_collection = db["tvshows_data"]  # Collection for TV shows
+collection = db["tv_shows_links"]  # Collection name
 
-# Function to save batch data to MongoDB
-def save_to_mongodb(collection, data, batch_size, total_key):
-    for i in range(0, len(data), batch_size):
-        batch = data[i:i + batch_size]
-        collection.insert_one({
-            total_key: batch,
-            "batch_start": i + 1,
-            "batch_end": i + len(batch),
-            "timestamp": time.time()
-        })
-        print(f"Saved batch {i + 1} to {i + len(batch)} to MongoDB collection '{collection.name}'.")
+# Function to process the TV shows from the JSON file
+def process_tvshows_from_json(json_file_path):
+    # Load the data from the JSON file
+    with open(json_file_path, 'r', encoding='utf-8') as file:
+        tvshows_data = json.load(file)
+        tvshows_data = tvshows_data[400:401]  # Processing a specific range for now
 
-# Function to get movies
-def get_movies(page_limit=5, batch_size=18000):
-    movies = []
-    for page in range(1, page_limit + 1):
-        url = f"{BASE_URL}/discover/movie?api_key={API_KEY}&page={page}"
-        response = requests.get(url, headers=HEADERS)
-        if response.status_code == 200:
-            data = response.json()
-            for movie in data['results']:
-                movies.append({
-                    "id": movie.get("id"),
-                    "title": movie.get("title")
-                })
-                if len(movies) % 100 == 0:  # Print update for every 100 movies
-                    sys.stdout.write(f"\rTotal {len(movies)} movie IDs processed.")
-                    sys.stdout.flush()
-        else:
-            print(f"Failed to fetch movies on page {page}. Status code: {response.status_code}")
-        time.sleep(0.2)  # Rate limiting
-    print(f"\nTotal movie IDs fetched: {len(movies)}. Saving to MongoDB.")
-    save_to_mongodb(movies_collection, movies, batch_size, "movies")
-    return len(movies)
+    try:
+        # Iterate over each TV show in the data
+        for tv_show in tvshows_data:
+            tv_id = tv_show["id"]
+            title = tv_show["title"]
+            seasons = tv_show["extra_data"].get("seasons", [])
 
-# Function to get detailed TV show data
-def get_tv_show_details(tv_id):
-    url = f"{BASE_URL}/tv/{tv_id}?api_key={API_KEY}"
-    response = requests.get(url, headers=HEADERS)
-    if response.status_code == 200:
-        data = response.json()
-        seasons = []
-        for season in data.get("seasons", []):
-            seasons.append({
-                "season_number": season.get("season_number"),
-                "episode_count": season.get("episode_count")
-            })
-        return {
-            "total_seasons": len(seasons),
-            "seasons": seasons
-        }
-    else:
-        print(f"Failed to fetch details for TV show ID {tv_id}. Status code: {response.status_code}")
-        return {
-            "total_seasons": 0,
-            "seasons": []
-        }
+            print(f"Processing TV show: {title} (ID: {tv_id})")
 
-# Function to get TV shows
-def get_tv_shows(page_limit=5, batch_size=500):
-    tv_shows = []
-    for page in range(1, page_limit + 1):
-        url = f"{BASE_URL}/discover/tv?api_key={API_KEY}&page={page}"
-        response = requests.get(url, headers=HEADERS)
-        if response.status_code == 200:
-            data = response.json()
-            for show in data['results']:
-                show_id = show.get("id")
-                show_title = show.get("name")
-                extra_data = get_tv_show_details(show_id)  # Fetch additional data
-                tv_shows.append({
-                    "id": show_id,
-                    "title": show_title,
-                    "extra_data": extra_data
-                })
-                if len(tv_shows) % 100 == 0:  # Print update for every 100 TV shows
-                    sys.stdout.write(f"\rTotal {len(tv_shows)} TV show IDs processed.")
-                    sys.stdout.flush()
-        else:
-            print(f"Failed to fetch TV shows on page {page}. Status code: {response.status_code}")
-        time.sleep(0.2)  # Rate limiting
-    print(f"\nTotal TV show IDs fetched: {len(tv_shows)}. Saving to MongoDB.")
-    save_to_mongodb(tvshows_collection, tv_shows, batch_size, "tv_shows")
-    return len(tv_shows)
+            # Initialize a dictionary to store TV show data
+            tv_show_data = {
+                "tv_id": tv_id,
+                "title": title,
+                "episodes": []
+            }
+
+            # Iterate through seasons
+            for season in seasons:
+                season_number = season["season_number"]
+                episode_count = season["episode_count"]
+
+                # Skip season 0
+                if season_number < 1:
+                    continue
+
+                print(f"  Season {season_number}, Episodes: {episode_count}")
+
+                # Iterate through episodes
+                for episode in range(1, episode_count + 1):
+                    url = f"https://vidsrcme.vidsrc.icu/embed/tv?tmdb={tv_id}&season={season_number}&episode={episode}&autoplay=1"
+                    print(f"    Requesting URL: {url}")
+
+                    try:
+                        response = requests.get(url)
+                        response.raise_for_status()
+
+                        # Parse the HTML content
+                        soup = BeautifulSoup(response.text, 'html.parser')
+
+                        # Extract the iframe element (main hash source)
+                        iframe_element = soup.find('iframe', id='player_iframe')
+                        iframe_src = iframe_element['src'] if iframe_element else None
+
+                        # Extract server hashes
+                        server_elements = soup.select(".servers")
+                        server_hashes = []
+
+                        for server in server_elements:
+                            server_hash = server.get('data-hash')
+                            if server_hash:
+                                server_hashes.append(server_hash)
+
+                        # Ensure the first hash is the main hash
+                        if server_hashes and iframe_src:
+                            # Add episode data to TV show data
+                            tv_show_data["episodes"].append({
+                                f"{season_number}_{episode}": {
+                                    "links": server_hashes[0]
+                                },
+                                "iframe_src": iframe_src,
+                            })
+
+                    except Exception as e:
+                        print(f"      Failed to load URL {url}: {str(e)}")
+
+                    # Add a small delay between requests
+                    time.sleep(2)
+
+            # Insert the TV show's data into MongoDB
+            collection.insert_one(tv_show_data)
+
+            print(f"Data for {title} (ID: {tv_id}) saved to MongoDB.")
+
+    except Exception as e:
+        print(f"Error during processing: {str(e)}")
 
 # Main Execution
 if __name__ == "__main__":
-    # # Fetch and save TV show data
-    # total_tvshows = get_tv_shows(page_limit=9285)  # Adjust page limit as needed
-
-    # Fetch and save movie data
-    total_movies = get_movies(page_limit=47135)  # Adjust page limit as needed
-
-    print(f"\nCompleted! Total TV shows: {total_tvshows}, Total Movies: {total_movies}")
+    # Provide the path to the JSON file
+    json_file_path = "file.json"
+    process_tvshows_from_json(json_file_path)
