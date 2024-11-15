@@ -108,8 +108,8 @@ def get_tv_shows(page_limit=5, batch_size=500):
 
 # Main Execution
 if __name__ == "__main__":
-    # Fetch and save TV show data
-    total_tvshows = get_tv_shows(page_limit=9285)  # Adjust page limit as needed
+    # # Fetch and save TV show data
+    # total_tvshows = get_tv_shows(page_limit=9285)  # Adjust page limit as needed
 
     # Fetch and save movie data
     total_movies = get_movies(page_limit=47135)  # Adjust page limit as needed
