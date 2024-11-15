@@ -1,7 +1,10 @@
 name: Run get_data.py Script
 
-on: [push]
-  
+on: 
+  push:
+    branches:
+      - main  # Specify the branch you want this to trigger on (adjust as needed)
+
 jobs:
   run-script:
     runs-on: ubuntu-latest
@@ -23,12 +26,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests pymongo
 
-    # Set up environment variables
-    - name: Set Environment Variables
-      env:
-        TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
-        MONGO_URL: ${{ secrets.MONGO_URL }}
-
     # Run the Python script
     - name: Execute get_data.py
-      run: python get_data.py
+      env:  # Provide environment variables here
+        TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        MONGO_URL: ${{ secrets.MONGO_URL }}
+      run: |
+        python get_data.py
